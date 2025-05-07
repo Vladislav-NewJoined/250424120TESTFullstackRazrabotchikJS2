@@ -7,13 +7,38 @@ let searchQuery = '';
 let itemsOrder = [];
 let initialLoadComplete = false;
 let totalItems = 0;
-
 const container = document.getElementById('list-container');
 const searchInput = document.getElementById('search-input');
 const resetButton = document.getElementById('reset-button');
 const loadingIndicator = document.getElementById('loading');
 const statusMessage = document.getElementById('status-message');
 const searchInfo = document.getElementById('search-info');
+
+// Функция для сохранения порядка элементов в localStorage
+function saveOrderToLocalStorage() {
+    const newOrder = Array.from(container.querySelectorAll('.item'))
+        .map(item => parseInt(item.getAttribute('data-id')));
+    localStorage.setItem('itemsOrder', JSON.stringify(newOrder));
+}
+
+// Функция для сохранения выбранных элементов в localStorage
+function saveSelectedToLocalStorage() {
+    const selectedIds = Array.from(container.querySelectorAll('.item.selected'))
+        .map(item => parseInt(item.getAttribute('data-id')));
+    localStorage.setItem('selectedItems', JSON.stringify(selectedIds));
+}
+
+// Функция для загрузки порядка элементов из localStorage
+function loadOrderFromLocalStorage() {
+    const savedOrder = localStorage.getItem('itemsOrder');
+    return savedOrder ? JSON.parse(savedOrder) : [];
+}
+
+// Функция для загрузки выбранных элементов из localStorage
+function loadSelectedFromLocalStorage() {
+    const savedSelected = localStorage.getItem('selectedItems');
+    return savedSelected ? JSON.parse(savedSelected) : [];
+}
 
 // Функция для отображения статусного сообщения
 function showStatus(message, isError = false) {
@@ -89,6 +114,9 @@ async function loadSelectedItems() {
             hasMoreItems = selectedItems.length > pageSize;
             currentPage = 1; // Начинаем с 1, так как уже загрузили первую страницу
             totalItems = selectedItems.length;
+            
+            // Сохраняем выбранные элементы в localStorage
+            saveSelectedToLocalStorage();
             
             return true; // Возвращаем true, если загрузили выбранные элементы
         }
@@ -169,6 +197,11 @@ async function loadItems(page, append = true) {
             
             container.appendChild(div);
         });
+        
+        // Сохраняем порядок в localStorage, если это первая загрузка
+        if (page === 0 && !append) {
+            saveOrderToLocalStorage();
+        }
     } catch (error) {
         console.error('Error loading items:', error);
         showStatus('Error loading items', true);
@@ -188,6 +221,7 @@ async function toggleItem(id, checkbox) {
         }
         
         checkbox.closest('.item').classList.toggle('selected');
+        saveSelectedToLocalStorage(); // Сохраняем выбранные элементы в localStorage
     } catch (error) {
         console.error('Error toggling item:', error);
         showStatus('Error toggling item selection', true);
@@ -197,6 +231,9 @@ async function toggleItem(id, checkbox) {
 
 // Функция для сброса порядка элементов
 async function resetOrder() {
+    // Удаляем сохраненный порядок из localStorage
+    localStorage.removeItem('itemsOrder');
+    
     try {
         const response = await fetch('/api/items/reset-order', { method: 'POST' });
         
@@ -222,29 +259,14 @@ function getSelectedItems() {
 
 // Обработчики для Drag&Drop
 let draggedItem = null;
-let draggedItems = [];
-let draggedItemsPositions = [];
+let dragStartIndex = -1;
 
 function handleDragStart(e) {
     draggedItem = this;
+    dragStartIndex = Array.from(container.querySelectorAll('.item')).indexOf(draggedItem);
     
-    // Если перетаскиваемый элемент выбран, то перетаскиваем все выбранные элементы
-    if (draggedItem.classList.contains('selected')) {
-        draggedItems = getSelectedItems();
-        
-        // Запоминаем позиции всех выбранных элементов
-        draggedItemsPositions = draggedItems.map(item => {
-            const allItems = Array.from(container.querySelectorAll('.item'));
-            return allItems.indexOf(item);
-        });
-    } else {
-        // Иначе перетаскиваем только текущий элемент
-        draggedItems = [draggedItem];
-        draggedItemsPositions = [Array.from(container.querySelectorAll('.item')).indexOf(draggedItem)];
-    }
-    
-    // Добавляем класс dragging ко всем перетаскиваемым элементам
-    draggedItems.forEach(item => item.classList.add('dragging'));
+    // Добавляем класс dragging только к перетаскиваемому элементу
+    draggedItem.classList.add('dragging');
     
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/html', this.innerHTML);
@@ -260,8 +282,8 @@ function handleDragOver(e) {
     const placeholders = container.querySelectorAll('.placeholder');
     placeholders.forEach(p => p.remove());
     
-    // Если элемент не перетаскивается или это один из перетаскиваемых элементов, выходим
-    if (!draggedItem || draggedItems.includes(this)) {
+    // Если элемент не перетаскивается или это тот же элемент, выходим
+    if (!draggedItem || this === draggedItem) {
         return false;
     }
     
@@ -293,12 +315,12 @@ function handleDrop(e) {
     const placeholders = container.querySelectorAll('.placeholder');
     placeholders.forEach(p => p.remove());
     
-    // Если элемент не перетаскивается или это один из перетаскиваемых элементов, выходим
-    if (!draggedItem || draggedItems.includes(this)) {
+    // Если элемент не перетаскивается или это тот же элемент, выходим
+    if (!draggedItem || this === draggedItem) {
         return false;
     }
     
-    // Определяем, куда вставлять элементы (до или после текущего элемента)
+    // Определяем, куда вставлять элемент (до или после текущего элемента)
     const rect = this.getBoundingClientRect();
     const y = e.clientY - rect.top;
     const isBelow = y > rect.height / 2;
@@ -309,31 +331,27 @@ function handleDrop(e) {
     // Определяем индекс целевого элемента
     const targetIndex = allItems.indexOf(this);
     
-    // Определяем, куда вставлять элементы
-    const insertIndex = isBelow ? targetIndex + 1 : targetIndex;
+    // Определяем, куда вставлять элемент
+    let insertIndex = isBelow ? targetIndex + 1 : targetIndex;
     
-    // Сортируем перетаскиваемые элементы по их исходным позициям (в обратном порядке)
-    const sortedItems = draggedItems.map((item, index) => ({
-        item,
-        originalIndex: draggedItemsPositions[index]
-    })).sort((a, b) => b.originalIndex - a.originalIndex);
+    // Удаляем перетаскиваемый элемент из DOM
+    draggedItem.remove();
     
-    // Удаляем перетаскиваемые элементы из DOM
-    sortedItems.forEach(({ item }) => {
-        item.remove();
-    });
+    // Корректируем insertIndex, если удаленный элемент был перед целевой позицией
+    if (dragStartIndex < targetIndex) {
+        insertIndex--;
+    }
     
     // Определяем элемент, перед которым будем вставлять
-    const insertBeforeElement = allItems[insertIndex] || null;
+    const remainingItems = Array.from(container.querySelectorAll('.item'));
+    const insertBeforeElement = remainingItems[insertIndex] || null;
     
-    // Вставляем перетаскиваемые элементы в новую позицию (в правильном порядке)
-    sortedItems.reverse().forEach(({ item }) => {
-        if (insertBeforeElement) {
-            container.insertBefore(item, insertBeforeElement);
-        } else {
-            container.appendChild(item);
-        }
-    });
+    // Вставляем перетаскиваемый элемент в новую позицию
+    if (insertBeforeElement) {
+        container.insertBefore(draggedItem, insertBeforeElement);
+    } else {
+        container.appendChild(draggedItem);
+    }
     
     // Обновляем порядок элементов на сервере
     updateItemsOrder();
@@ -342,8 +360,10 @@ function handleDrop(e) {
 }
 
 function handleDragEnd() {
-    // Удаляем класс dragging со всех перетаскиваемых элементов
-    draggedItems.forEach(item => item.classList.remove('dragging'));
+    // Удаляем класс dragging с перетаскиваемого элемента
+    if (draggedItem) {
+        draggedItem.classList.remove('dragging');
+    }
     
     // Удаляем все плейсхолдеры
     const placeholders = container.querySelectorAll('.placeholder');
@@ -351,8 +371,10 @@ function handleDragEnd() {
     
     // Сбрасываем переменные
     draggedItem = null;
-    draggedItems = [];
-    draggedItemsPositions = [];
+    dragStartIndex = -1;
+    
+    // Сохраняем порядок в localStorage
+    saveOrderToLocalStorage();
 }
 
 // Функция для обновления порядка элементов на сервере
@@ -374,6 +396,7 @@ async function updateItemsOrder() {
         }
         
         itemsOrder = newOrder;
+        saveOrderToLocalStorage(); // Сохраняем порядок в localStorage
         showStatus('Order updated successfully');
     } catch (error) {
         console.error('Error updating order:', error);
@@ -408,8 +431,38 @@ window.addEventListener('scroll', () => {
     }
 });
 
-// Инициализация: сначала пытаемся загрузить выбранные элементы
+// Инициализация: загружаем данные из localStorage
 async function initializeApp() {
+    // Загружаем сохраненный порядок
+    const savedOrder = loadOrderFromLocalStorage();
+    if (savedOrder && savedOrder.length > 0) {
+        // Отправляем сохраненный порядок на сервер
+        try {
+            await fetch('/api/items/reorder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(savedOrder)
+            });
+        } catch (error) {
+            console.error('Error restoring order:', error);
+        }
+    }
+    
+    // Загружаем сохраненные выбранные элементы
+    const savedSelectedIds = loadSelectedFromLocalStorage();
+    if (savedSelectedIds && savedSelectedIds.length > 0) {
+        // Отмечаем элементы как выбранные на сервере
+        try {
+            for (const id of savedSelectedIds) {
+                await fetch(`/api/items/${id}/toggle`, { method: 'POST' });
+            }
+        } catch (error) {
+            console.error('Error restoring selected items:', error);
+        }
+    }
+    
     const hasSelectedItems = await loadSelectedItems();
     
     // Если нет выбранных элементов, загружаем обычные элементы

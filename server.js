@@ -17,13 +17,21 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Маршруты
 app.use('/api/items', itemsRoutes);
 
-// Обработка корневого маршрута
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// // Обработка корневого маршрута
+app.use((req, res, next) => {
+  // Проверяем, не является ли запрос API-запросом
+  if (!req.path.startsWith('/api/')) {
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
+  next();
 });
 
+// app.get('/', (req, res) => {
+//   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// });
+
 // Обработка всех остальных маршрутов (для SPA)
-app.get('*', (req, res) => {
+app.get('/*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
