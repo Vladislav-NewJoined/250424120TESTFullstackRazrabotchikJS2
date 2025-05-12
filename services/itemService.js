@@ -1,173 +1,137 @@
-const ListItem = require('../models/listItem');
-const fs = require('fs');
-const path = require('path');
+// Имитация базы данных с элементами
+const items = Array.from({ length: 1000 }, (_, i) => ({
+    id: i + 1,
+    displayText: `Item ${i + 1}`,
+    selected: false
+}));
 
-class ItemService {
-  constructor() {
-    this.items = [];
-    this.customOrder = [];
-    this.hasCustomOrder = false;
-    this.orderFile = path.join(__dirname, '../data/order.json');
-    this.selectedFile = path.join(__dirname, '../data/selected.json');
+// Хранение выбранных элементов
+let selectedItems = [];
+
+// Хранение порядка элементов
+let itemsOrder = [];
+
+// Получение элементов с пагинацией и поиском
+function getItems(page, size, search = '') {
+    // Фильтрация по поисковому запросу
+    const filteredItems = items.filter(item =>
+        item.displayText.toLowerCase().includes(search.toLowerCase())
+    );
     
-    // Создаем директорию data, если она не существует
-    if (!fs.existsSync(path.join(__dirname, '../data'))) {
-      fs.mkdirSync(path.join(__dirname, '../data'), { recursive: true });
-    }
+    // Применение пагинации
+    const startIndex = page * size;
+    const endIndex = startIndex + size;
     
-    // Инициализация миллиона элементов
-    for (let i = 1; i <= 1000000; i++) {
-      this.items.push(new ListItem(i));
-    }
-    
-    // Загружаем сохраненный порядок и выбранные элементы
-    this.loadSavedState();
-  }
-  
-  // Загрузка сохраненного состояния
-  loadSavedState() {
-    try {
-      // Загружаем сохраненный порядок
-      if (fs.existsSync(this.orderFile)) {
-        this.customOrder = JSON.parse(fs.readFileSync(this.orderFile, 'utf8'));
-        this.hasCustomOrder = this.customOrder.length > 0;
-      }
-      
-      // Загружаем выбранные элементы
-      if (fs.existsSync(this.selectedFile)) {
-        const selectedIds = JSON.parse(fs.readFileSync(this.selectedFile, 'utf8'));
-        selectedIds.forEach(id => {
-          const item = this.items.find(item => item.id === id);
-          if (item) {
-            item.selected = true;
-          }
+    // Если есть сохраненный порядок, применяем его
+    if (itemsOrder.length > 0) {
+        // Создаем карту для быстрого доступа к элементам
+        const itemsMap = new Map();
+        filteredItems.forEach(item => {
+            itemsMap.set(item.id, item);
         });
-      }
-    } catch (error) {
-      console.error('Error loading saved state:', error);
-    }
-  }
-  
-  // Сохранение текущего порядка
-  saveOrder() {
-    try {
-      fs.writeFileSync(this.orderFile, JSON.stringify(this.customOrder));
-    } catch (error) {
-      console.error('Error saving order:', error);
-    }
-  }
-  
-  // Сохранение выбранных элементов
-  saveSelected() {
-    try {
-      const selectedIds = this.items
-        .filter(item => item.selected)
-        .map(item => item.id);
-      fs.writeFileSync(this.selectedFile, JSON.stringify(selectedIds));
-    } catch (error) {
-      console.error('Error saving selected items:', error);
-    }
-  }
-
-  getItems(page, size, searchQuery) {
-    // Применяем фильтрацию, если есть поисковый запрос
-    let filteredItems = this.items;
-    
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filteredItems = this.items.filter(item =>
-        item.displayText.toLowerCase().includes(query)
-      );
-    }
-    
-    // Применяем пользовательскую сортировку, если она есть
-    if (this.hasCustomOrder && this.customOrder.length > 0) {
-      filteredItems = [...filteredItems].sort((a, b) => {
-        const indexA = this.customOrder.indexOf(a.id);
-        const indexB = this.customOrder.indexOf(b.id);
         
-        if (indexA === -1) return 1;
-        if (indexB === -1) return -1;
+        // Получаем элементы в указанном порядке
+        const orderedItems = [];
         
-        return indexA - indexB;
-      });
-    }
-    
-    // Применяем пагинацию
-    const start = page * size;
-    const end = Math.min(start + size, filteredItems.length);
-    
-    if (start >= filteredItems.length) {
-      return [];
-    }
-    
-    return filteredItems.slice(start, end);
-  }
-  
-  getTotalCount(searchQuery) {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      return this.items.filter(item =>
-        item.displayText.toLowerCase().includes(query)
-      ).length;
-    }
-    return this.items.length;
-  }
-  
-  toggleSelection(id) {
-    const item = this.items.find(item => item.id === id);
-    if (item) {
-      item.selected = !item.selected;
-      this.saveSelected(); // Сохраняем выбранные элементы
-      return true;
-    }
-    return false;
-  }
-  
-  updateOrder(newOrder) {
-    if (newOrder && newOrder.length > 0) {
-      this.customOrder = [...newOrder];
-      this.hasCustomOrder = true;
-      this.saveOrder(); // Сохраняем новый порядок
-      return true;
-    }
-    return false;
-  }
-  
-  getSelectedItems() {
-    let selectedItems = this.items.filter(item => item.selected);
-    
-    // Применяем пользовательскую сортировку, если она есть
-    if (this.hasCustomOrder && this.customOrder.length > 0) {
-      selectedItems = [...selectedItems].sort((a, b) => {
-        const indexA = this.customOrder.indexOf(a.id);
-        const indexB = this.customOrder.indexOf(b.id);
+        // Сначала добавляем элементы из сохраненного порядка
+        itemsOrder.forEach(id => {
+            const item = itemsMap.get(id);
+            if (item && filteredItems.includes(item)) {
+                orderedItems.push(item);
+            }
+        });
         
-        if (indexA === -1) return 1;
-        if (indexB === -1) return -1;
+        // Затем добавляем элементы, которых нет в сохраненном порядке
+        filteredItems.forEach(item => {
+            if (!itemsOrder.includes(item.id)) {
+                orderedItems.push(item);
+            }
+        });
         
-        return indexA - indexB;
-      });
+        // Применяем пагинацию к упорядоченным элементам
+        return orderedItems.slice(startIndex, endIndex);
     }
     
-    return selectedItems;
-  }
-  
-  hasSelectedItems() {
-    return this.items.some(item => item.selected);
-  }
-  
-  getCurrentOrder() {
-    return [...this.customOrder];
-  }
-  
-  resetOrder() {
-    this.customOrder = [];
-    this.hasCustomOrder = false;
-    this.saveOrder(); // Сохраняем сброшенный порядок
-    return true;
-  }
+    // Если нет сохраненного порядка, просто применяем пагинацию
+    return filteredItems.slice(startIndex, endIndex);
 }
 
-// Создаем и экспортируем единственный экземпляр сервиса
-module.exports = new ItemService();
+// Получение общего количества элементов
+function getTotalCount(search = '') {
+    if (!search) {
+        return items.length;
+    }
+    
+    return items.filter(item =>
+        item.displayText.toLowerCase().includes(search.toLowerCase())
+    ).length;
+}
+
+// Получение выбранных элементов
+function getSelectedItems() {
+    // Обновляем список выбранных элементов
+    selectedItems = items.filter(item => item.selected);
+    return selectedItems;
+}
+
+// Проверка наличия выбранных элементов
+function hasSelectedItems() {
+    // Обновляем список выбранных элементов перед проверкой
+    selectedItems = items.filter(item => item.selected);
+    return selectedItems.length > 0;
+}
+
+// Переключение выбора элемента
+function toggleSelection(id) {
+    const item = items.find(item => item.id === id);
+    
+    if (!item) {
+        return false;
+    }
+    
+    item.selected = !item.selected;
+    
+    // Обновляем список выбранных элементов
+    selectedItems = items.filter(item => item.selected);
+    
+    return true;
+}
+
+// Обновление порядка элементов
+function updateOrder(newOrder) {
+    if (!Array.isArray(newOrder)) {
+        return false;
+    }
+    
+    // Проверяем, что все ID в newOrder существуют
+    const validIds = newOrder.every(id => items.some(item => item.id === id));
+    
+    if (!validIds) {
+        return false;
+    }
+    
+    itemsOrder = newOrder;
+    return true;
+}
+
+// Получение текущего порядка элементов
+function getCurrentOrder() {
+    return itemsOrder;
+}
+
+// Сброс порядка элементов
+function resetOrder() {
+    itemsOrder = [];
+    return true;
+}
+
+module.exports = {
+    getItems,
+    getTotalCount,
+    getSelectedItems,
+    hasSelectedItems,
+    toggleSelection,
+    updateOrder,
+    getCurrentOrder,
+    resetOrder
+};

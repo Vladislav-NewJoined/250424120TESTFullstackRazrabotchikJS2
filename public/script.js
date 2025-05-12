@@ -7,6 +7,7 @@ let searchQuery = '';
 let itemsOrder = [];
 let initialLoadComplete = false;
 let totalItems = 0;
+
 const container = document.getElementById('list-container');
 const searchInput = document.getElementById('search-input');
 const resetButton = document.getElementById('reset-button');
@@ -71,6 +72,11 @@ async function loadSelectedItems() {
         
         const selectedItems = await response.json();
         
+        // Изменение: Не загружаем только выбранные элементы, а загружаем все
+        // Возвращаем false, чтобы продолжить загрузку всех элементов
+        return false;
+        
+        /* Закомментированный старый код:
         if (selectedItems.length > 0) {
             container.innerHTML = '';
             itemsOrder = [];
@@ -120,6 +126,7 @@ async function loadSelectedItems() {
             
             return true; // Возвращаем true, если загрузили выбранные элементы
         }
+        */
         
         return false; // Возвращаем false, если нет выбранных элементов
     } catch (error) {
@@ -396,47 +403,85 @@ async function updateItemsOrder() {
         }
         
         itemsOrder = newOrder;
-        saveOrderToLocalStorage(); // Сохраняем порядок в localStorage
-        showStatus('Order updated successfully');
+        saveOrderToLocalStorage();
     } catch (error) {
         console.error('Error updating order:', error);
-        showStatus('Error updating order', true);
+        showStatus('Error updating item order', true);
     }
 }
 
-// Обработчик поиска с debounce
-searchInput.addEventListener('input', function() {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        const newSearchQuery = this.value.trim();
+// Функция для загрузки порядка элементов с сервера
+async function loadItemsOrder() {
+    try {
+        const response = await fetch('/api/items/order');
         
-        // Если поисковый запрос изменился, сбрасываем пагинацию
-        if (newSearchQuery !== searchQuery) {
-            searchQuery = newSearchQuery;
-            currentPage = 0;
-            hasMoreItems = true;
-            loadItems(currentPage, false);
+        if (!response.ok) {
+            throw new Error('Failed to load order');
         }
-    }, 300);
-});
-
-// Обработчик для кнопки сброса порядка
-resetButton.addEventListener('click', resetOrder);
-
-// Обработчик прокрутки для бесконечной загрузки
-window.addEventListener('scroll', () => {
-    if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200 && !isLoading && hasMoreItems) {
-        currentPage++;
-        loadItems(currentPage);
+        
+        const orderData = await response.json();
+        
+        // Если есть сохраненный порядок, применяем его
+        if (orderData && orderData.length > 0) {
+            // Сохраняем порядок в localStorage
+            localStorage.setItem('itemsOrder', JSON.stringify(orderData));
+            return orderData;
+        }
+        
+        return [];
+    } catch (error) {
+        console.error('Error loading order:', error);
+        showStatus('Error loading item order', true);
+        return [];
     }
-});
+}
 
-// Инициализация: загружаем данные из localStorage
-async function initializeApp() {
-    // Загружаем сохраненный порядок
-    const savedOrder = loadOrderFromLocalStorage();
-    if (savedOrder && savedOrder.length > 0) {
-        // Отправляем сохраненный порядок на сервер
+// Функция для применения порядка элементов
+function applyItemsOrder(order) {
+    if (!order || order.length === 0) return;
+    
+    const itemsMap = new Map();
+    const items = container.querySelectorAll('.item');
+    
+    // Создаем карту элементов по их ID
+    items.forEach(item => {
+        const id = parseInt(item.getAttribute('data-id'));
+        itemsMap.set(id, item);
+    });
+    
+    // Временный контейнер для хранения элементов в новом порядке
+    const fragment = document.createDocumentFragment();
+    
+    // Добавляем элементы в порядке, указанном в order
+    order.forEach(id => {
+        const item = itemsMap.get(id);
+        if (item) {
+            fragment.appendChild(item);
+        }
+    });
+    
+    // Добавляем элементы, которых нет в order (если такие есть)
+    items.forEach(item => {
+        const id = parseInt(item.getAttribute('data-id'));
+        if (!order.includes(id)) {
+            fragment.appendChild(item);
+        }
+    });
+    
+    // Очищаем контейнер и добавляем элементы в новом порядке
+    container.innerHTML = '';
+    container.appendChild(fragment);
+}
+
+// Функция для инициализации приложения
+async function initApp() {
+    // Загружаем порядок элементов из localStorage или с сервера
+    let savedOrder = loadOrderFromLocalStorage();
+    
+    if (!savedOrder || savedOrder.length === 0) {
+        savedOrder = await loadItemsOrder();
+    } else {
+        // Если есть порядок в localStorage, отправляем его на сервер
         try {
             await fetch('/api/items/reorder', {
                 method: 'POST',
@@ -446,32 +491,62 @@ async function initializeApp() {
                 body: JSON.stringify(savedOrder)
             });
         } catch (error) {
-            console.error('Error restoring order:', error);
+            console.error('Error syncing order with server:', error);
         }
     }
     
-    // Загружаем сохраненные выбранные элементы
-    const savedSelectedIds = loadSelectedFromLocalStorage();
-    if (savedSelectedIds && savedSelectedIds.length > 0) {
-        // Отмечаем элементы как выбранные на сервере
-        try {
-            for (const id of savedSelectedIds) {
-                await fetch(`/api/items/${id}/toggle`, { method: 'POST' });
-            }
-        } catch (error) {
-            console.error('Error restoring selected items:', error);
-        }
-    }
+    // Изменение: Всегда загружаем все элементы, а не только выбранные
+    // Загружаем обычный список элементов
+    await loadItems(0, false);
     
-    const hasSelectedItems = await loadSelectedItems();
-    
-    // Если нет выбранных элементов, загружаем обычные элементы
-    if (!hasSelectedItems) {
-        loadItems(currentPage);
+    // Применяем сохраненный порядок
+    if (savedOrder && savedOrder.length > 0) {
+        applyItemsOrder(savedOrder);
     }
     
     initialLoadComplete = true;
+    
+    /* Закомментированный старый код:
+    // Проверяем, есть ли выбранные элементы
+    const hasSelected = await loadSelectedItems();
+    
+    if (!hasSelected) {
+        // Если нет выбранных элементов, загружаем обычный список
+        await loadItems(0, false);
+        
+        // Применяем сохраненный порядок
+        if (savedOrder && savedOrder.length > 0) {
+            applyItemsOrder(savedOrder);
+        }
+    }
+    */
 }
 
-// Запускаем инициализацию
-initializeApp();
+// Обработчик прокрутки для подгрузки элементов
+window.addEventListener('scroll', () => {
+    if (!initialLoadComplete) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
+    
+    if (scrollTop + clientHeight >= scrollHeight - 100 && !isLoading && hasMoreItems) {
+        currentPage++;
+        loadItems(currentPage, true);
+    }
+});
+
+// Обработчик для поиска
+searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    
+    searchTimeout = setTimeout(() => {
+        searchQuery = e.target.value.trim();
+        currentPage = 0;
+        loadItems(currentPage, false);
+    }, 300);
+});
+
+// Обработчик для кнопки сброса
+resetButton.addEventListener('click', resetOrder);
+
+// Инициализация приложения
+initApp();
