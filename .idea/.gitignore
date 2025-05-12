@@ -1,4 +1,10 @@
-# Default ignored files
+# Node.js
+node_modules/
+.env
+.DS_Store
+npm-debug.log
+
+# IntelliJ IDEA
 /shelf/
 /workspace.xml
 # Environment-dependent path to Maven home directory
