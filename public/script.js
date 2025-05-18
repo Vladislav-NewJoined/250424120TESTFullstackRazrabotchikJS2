@@ -1,9 +1,11 @@
+
+// Глобальные переменные
 let currentPage = 0;
 const pageSize = 20;
 let isLoading = false;
 let hasMoreItems = true;
 let searchTimeout;
-let searchQuery = '';
+let searchQuery = localStorage.getItem('searchQuery') || '';
 let itemsOrder = [];
 let initialLoadComplete = false;
 let totalItems = 0;
@@ -15,44 +17,37 @@ const loadingIndicator = document.getElementById('loading');
 const statusMessage = document.getElementById('status-message');
 const searchInfo = document.getElementById('search-info');
 
-// Функция для сохранения порядка элементов в localStorage
+// Вспомогательные функции для работы с localStorage
 function saveOrderToLocalStorage() {
     const newOrder = Array.from(container.querySelectorAll('.item'))
         .map(item => parseInt(item.getAttribute('data-id')));
     localStorage.setItem('itemsOrder', JSON.stringify(newOrder));
 }
 
-// Функция для сохранения выбранных элементов в localStorage
 function saveSelectedToLocalStorage() {
     const selectedIds = Array.from(container.querySelectorAll('.item.selected'))
         .map(item => parseInt(item.getAttribute('data-id')));
     localStorage.setItem('selectedItems', JSON.stringify(selectedIds));
 }
 
-// Функция для загрузки порядка элементов из localStorage
 function loadOrderFromLocalStorage() {
     const savedOrder = localStorage.getItem('itemsOrder');
     return savedOrder ? JSON.parse(savedOrder) : [];
 }
 
-// Функция для загрузки выбранных элементов из localStorage
 function loadSelectedFromLocalStorage() {
     const savedSelected = localStorage.getItem('selectedItems');
     return savedSelected ? JSON.parse(savedSelected) : [];
 }
 
-// Функция для отображения статусного сообщения
+// UI функции
 function showStatus(message, isError = false) {
     statusMessage.textContent = message;
     statusMessage.style.backgroundColor = isError ? '#f44336' : '#333';
     statusMessage.classList.add('show');
-    
-    setTimeout(() => {
-        statusMessage.classList.remove('show');
-    }, 3000);
+    setTimeout(() => statusMessage.classList.remove('show'), 3000);
 }
 
-// Функция для обновления информации о поиске
 function updateSearchInfo() {
     if (searchQuery) {
         searchInfo.textContent = `Showing results for "${searchQuery}" (${totalItems} items found)`;
@@ -62,126 +57,46 @@ function updateSearchInfo() {
     }
 }
 
-// Функция для загрузки выбранных элементов при первой загрузке
-async function loadSelectedItems() {
-    try {
-        const response = await fetch('/api/items/selected');
-        if (!response.ok) {
-            throw new Error('Failed to load selected items');
-        }
-        
-        const selectedItems = await response.json();
-        
-        // Изменение: Не загружаем только выбранные элементы, а загружаем все
-        // Возвращаем false, чтобы продолжить загрузку всех элементов
-        return false;
-        
-        /* Закомментированный старый код:
-        if (selectedItems.length > 0) {
-            container.innerHTML = '';
-            itemsOrder = [];
-            
-            // Отображаем только первые 20 выбранных элементов
-            const itemsToShow = selectedItems.slice(0, pageSize);
-            
-            itemsToShow.forEach(item => {
-                const itemId = item.id;
-                itemsOrder.push(itemId);
-                
-                const div = document.createElement('div');
-                div.className = `item ${item.selected ? 'selected' : ''}`;
-                div.setAttribute('data-id', itemId);
-                div.draggable = true;
-                
-                div.innerHTML = `
-                    <div class="drag-handle">☰</div>
-                    <div class="item-content">
-                        <input type="checkbox" class="checkbox" ${item.selected ? 'checked' : ''}>
-                        <span>${item.displayText || 'Item ' + itemId}</span>
-                    </div>
-                `;
-                
-                // Добавляем обработчик для чекбокса
-                const checkbox = div.querySelector('.checkbox');
-                checkbox.addEventListener('click', function() {
-                    toggleItem(itemId, this);
-                });
-                
-                // Добавляем обработчики для Drag&Drop
-                div.addEventListener('dragstart', handleDragStart);
-                div.addEventListener('dragover', handleDragOver);
-                div.addEventListener('drop', handleDrop);
-                div.addEventListener('dragend', handleDragEnd);
-                
-                container.appendChild(div);
-            });
-            
-            // Если выбранных элементов больше 20, устанавливаем флаг для подгрузки остальных
-            hasMoreItems = selectedItems.length > pageSize;
-            currentPage = 1; // Начинаем с 1, так как уже загрузили первую страницу
-            totalItems = selectedItems.length;
-            
-            // Сохраняем выбранные элементы в localStorage
-            saveSelectedToLocalStorage();
-            
-            return true; // Возвращаем true, если загрузили выбранные элементы
-        }
-        */
-        
-        return false; // Возвращаем false, если нет выбранных элементов
-    } catch (error) {
-        console.error('Error loading selected items:', error);
-        showStatus('Error loading selected items', true);
-        return false;
-    }
-}
-
-// Функция для загрузки элементов
+// Основные функции для работы с элементами
 async function loadItems(page, append = true) {
     if (isLoading || (!hasMoreItems && append)) return;
-    
+
     isLoading = true;
     loadingIndicator.style.display = 'block';
-    
+
     try {
         const url = `/api/items?page=${page}&size=${pageSize}${searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : ''}`;
         const response = await fetch(url);
-        
-        if (!response.ok) {
-            throw new Error('Failed to load items');
-        }
-        
+
+        if (!response.ok) throw new Error('Failed to load items');
+
         const data = await response.json();
-        
-        // Обновляем информацию о пагинации
         totalItems = data.totalCount || 0;
         hasMoreItems = data.hasMore || false;
-        
-        // Обновляем информацию о поиске
+
         updateSearchInfo();
-        
-        // Проверяем, есть ли в ответе массив items
+
         const items = data.items || [];
-        
+
         if (!append) {
             container.innerHTML = '';
             itemsOrder = [];
         }
-        
+
         if (items.length === 0 && page === 0) {
             container.innerHTML = '<div class="loading">No items found</div>';
             return;
         }
-        
+
         items.forEach(item => {
             const itemId = item.id;
             itemsOrder.push(itemId);
-            
+
             const div = document.createElement('div');
             div.className = `item ${item.selected ? 'selected' : ''}`;
             div.setAttribute('data-id', itemId);
             div.draggable = true;
-            
+
             div.innerHTML = `
                 <div class="drag-handle">☰</div>
                 <div class="item-content">
@@ -189,23 +104,18 @@ async function loadItems(page, append = true) {
                     <span>${item.displayText || 'Item ' + itemId}</span>
                 </div>
             `;
-            
-            // Добавляем обработчик для чекбокса
+
             const checkbox = div.querySelector('.checkbox');
-            checkbox.addEventListener('click', function() {
-                toggleItem(itemId, this);
-            });
-            
-            // Добавляем обработчики для Drag&Drop
+            checkbox.addEventListener('click', () => toggleItem(itemId, checkbox));
+
             div.addEventListener('dragstart', handleDragStart);
             div.addEventListener('dragover', handleDragOver);
             div.addEventListener('drop', handleDrop);
             div.addEventListener('dragend', handleDragEnd);
-            
+
             container.appendChild(div);
         });
-        
-        // Сохраняем порядок в localStorage, если это первая загрузка
+
         if (page === 0 && !append) {
             saveOrderToLocalStorage();
         }
@@ -218,190 +128,121 @@ async function loadItems(page, append = true) {
     }
 }
 
-// Функция для переключения выбора элемента
 async function toggleItem(id, checkbox) {
     try {
         const response = await fetch(`/api/items/${id}/toggle`, { method: 'POST' });
-        
-        if (!response.ok) {
-            throw new Error('Failed to toggle item');
-        }
-        
+
+        if (!response.ok) throw new Error('Failed to toggle item');
+
         checkbox.closest('.item').classList.toggle('selected');
-        saveSelectedToLocalStorage(); // Сохраняем выбранные элементы в localStorage
+        saveSelectedToLocalStorage();
     } catch (error) {
         console.error('Error toggling item:', error);
         showStatus('Error toggling item selection', true);
-        checkbox.checked = !checkbox.checked; // Возвращаем предыдущее состояние
+        checkbox.checked = !checkbox.checked;
     }
 }
 
-// Функция для сброса порядка элементов
 async function resetOrder() {
-    // Удаляем сохраненный порядок из localStorage
-    localStorage.removeItem('itemsOrder');
-    
     try {
+        localStorage.removeItem('itemsOrder');
+        localStorage.removeItem('searchQuery');
+
         const response = await fetch('/api/items/reset-order', { method: 'POST' });
-        
-        if (!response.ok) {
-            throw new Error('Failed to reset order');
-        }
-        
+        if (!response.ok) throw new Error('Failed to reset order');
+
         showStatus('Order has been reset');
-        
-        // Перезагружаем элементы
+        searchQuery = '';
+        searchInput.value = '';
         currentPage = 0;
-        loadItems(currentPage, false);
+        await loadItems(currentPage, false);
     } catch (error) {
         console.error('Error resetting order:', error);
         showStatus('Error resetting order', true);
     }
 }
 
-// Функция для получения всех выбранных элементов
-function getSelectedItems() {
-    return Array.from(container.querySelectorAll('.item.selected'));
-}
-
-// Обработчики для Drag&Drop
+// Drag & Drop функционал
 let draggedItem = null;
 let dragStartIndex = -1;
 
 function handleDragStart(e) {
     draggedItem = this;
     dragStartIndex = Array.from(container.querySelectorAll('.item')).indexOf(draggedItem);
-    
-    // Добавляем класс dragging только к перетаскиваемому элементу
     draggedItem.classList.add('dragging');
-    
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/html', this.innerHTML);
 }
 
 function handleDragOver(e) {
-    if (e.preventDefault) {
-        e.preventDefault();
-    }
+    e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    
-    // Удаляем все плейсхолдеры
-    const placeholders = container.querySelectorAll('.placeholder');
-    placeholders.forEach(p => p.remove());
-    
-    // Если элемент не перетаскивается или это тот же элемент, выходим
-    if (!draggedItem || this === draggedItem) {
-        return false;
-    }
-    
-    // Определяем, куда вставлять плейсхолдер (до или после текущего элемента)
+
+    container.querySelectorAll('.placeholder').forEach(p => p.remove());
+
+    if (!draggedItem || this === draggedItem) return false;
+
     const rect = this.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const isBelow = y > rect.height / 2;
-    
-    // Создаем плейсхолдер
+    const isBelow = e.clientY - rect.top > rect.height / 2;
+
     const placeholder = document.createElement('div');
     placeholder.className = 'placeholder';
-    
-    // Вставляем плейсхолдер до или после текущего элемента
-    if (isBelow) {
-        this.parentNode.insertBefore(placeholder, this.nextSibling);
-    } else {
-        this.parentNode.insertBefore(placeholder, this);
-    }
-    
+
+    this.parentNode.insertBefore(placeholder, isBelow ? this.nextSibling : this);
+
     return false;
 }
 
 function handleDrop(e) {
-    if (e.stopPropagation) {
-        e.stopPropagation();
-    }
-    
-    // Удаляем все плейсхолдеры
-    const placeholders = container.querySelectorAll('.placeholder');
-    placeholders.forEach(p => p.remove());
-    
-    // Если элемент не перетаскивается или это тот же элемент, выходим
-    if (!draggedItem || this === draggedItem) {
-        return false;
-    }
-    
-    // Определяем, куда вставлять элемент (до или после текущего элемента)
-    const rect = this.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const isBelow = y > rect.height / 2;
-    
-    // Получаем все элементы
+    e.stopPropagation();
+
+    container.querySelectorAll('.placeholder').forEach(p => p.remove());
+
+    if (!draggedItem || this === draggedItem) return false;
+
+    const isBelow = e.clientY - this.getBoundingClientRect().top > this.offsetHeight / 2;
     const allItems = Array.from(container.querySelectorAll('.item'));
-    
-    // Определяем индекс целевого элемента
     const targetIndex = allItems.indexOf(this);
-    
-    // Определяем, куда вставлять элемент
     let insertIndex = isBelow ? targetIndex + 1 : targetIndex;
-    
-    // Удаляем перетаскиваемый элемент из DOM
+
+    if (dragStartIndex < targetIndex) insertIndex--;
+
     draggedItem.remove();
-    
-    // Корректируем insertIndex, если удаленный элемент был перед целевой позицией
-    if (dragStartIndex < targetIndex) {
-        insertIndex--;
-    }
-    
-    // Определяем элемент, перед которым будем вставлять
     const remainingItems = Array.from(container.querySelectorAll('.item'));
     const insertBeforeElement = remainingItems[insertIndex] || null;
-    
-    // Вставляем перетаскиваемый элемент в новую позицию
-    if (insertBeforeElement) {
-        container.insertBefore(draggedItem, insertBeforeElement);
-    } else {
-        container.appendChild(draggedItem);
-    }
-    
-    // Обновляем порядок элементов на сервере
+
+    container.insertBefore(draggedItem, insertBeforeElement);
     updateItemsOrder();
-    
+
     return false;
 }
 
 function handleDragEnd() {
-    // Удаляем класс dragging с перетаскиваемого элемента
     if (draggedItem) {
         draggedItem.classList.remove('dragging');
     }
-    
-    // Удаляем все плейсхолдеры
-    const placeholders = container.querySelectorAll('.placeholder');
-    placeholders.forEach(p => p.remove());
-    
-    // Сбрасываем переменные
+
+    container.querySelectorAll('.placeholder').forEach(p => p.remove());
+
     draggedItem = null;
     dragStartIndex = -1;
-    
-    // Сохраняем порядок в localStorage
+
     saveOrderToLocalStorage();
 }
 
-// Функция для обновления порядка элементов на сервере
 async function updateItemsOrder() {
     const newOrder = Array.from(container.querySelectorAll('.item'))
         .map(item => parseInt(item.getAttribute('data-id')));
-    
+
     try {
         const response = await fetch('/api/items/reorder', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newOrder)
         });
-        
-        if (!response.ok) {
-            throw new Error('Failed to update order');
-        }
-        
+
+        if (!response.ok) throw new Error('Failed to update order');
+
         itemsOrder = newOrder;
         saveOrderToLocalStorage();
     } catch (error) {
@@ -410,143 +251,55 @@ async function updateItemsOrder() {
     }
 }
 
-// Функция для загрузки порядка элементов с сервера
-async function loadItemsOrder() {
-    try {
-        const response = await fetch('/api/items/order');
-        
-        if (!response.ok) {
-            throw new Error('Failed to load order');
-        }
-        
-        const orderData = await response.json();
-        
-        // Если есть сохраненный порядок, применяем его
-        if (orderData && orderData.length > 0) {
-            // Сохраняем порядок в localStorage
-            localStorage.setItem('itemsOrder', JSON.stringify(orderData));
-            return orderData;
-        }
-        
-        return [];
-    } catch (error) {
-        console.error('Error loading order:', error);
-        showStatus('Error loading item order', true);
-        return [];
-    }
-}
-
-// Функция для применения порядка элементов
-function applyItemsOrder(order) {
-    if (!order || order.length === 0) return;
-    
-    const itemsMap = new Map();
-    const items = container.querySelectorAll('.item');
-    
-    // Создаем карту элементов по их ID
-    items.forEach(item => {
-        const id = parseInt(item.getAttribute('data-id'));
-        itemsMap.set(id, item);
-    });
-    
-    // Временный контейнер для хранения элементов в новом порядке
-    const fragment = document.createDocumentFragment();
-    
-    // Добавляем элементы в порядке, указанном в order
-    order.forEach(id => {
-        const item = itemsMap.get(id);
-        if (item) {
-            fragment.appendChild(item);
-        }
-    });
-    
-    // Добавляем элементы, которых нет в order (если такие есть)
-    items.forEach(item => {
-        const id = parseInt(item.getAttribute('data-id'));
-        if (!order.includes(id)) {
-            fragment.appendChild(item);
-        }
-    });
-    
-    // Очищаем контейнер и добавляем элементы в новом порядке
-    container.innerHTML = '';
-    container.appendChild(fragment);
-}
-
-// Функция для инициализации приложения
+// Инициализация приложения
 async function initApp() {
-    // Загружаем порядок элементов из localStorage или с сервера
-    let savedOrder = loadOrderFromLocalStorage();
-    
-    if (!savedOrder || savedOrder.length === 0) {
-        savedOrder = await loadItemsOrder();
-    } else {
-        // Если есть порядок в localStorage, отправляем его на сервер
-        try {
-            await fetch('/api/items/reorder', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(savedOrder)
-            });
-        } catch (error) {
-            console.error('Error syncing order with server:', error);
-        }
+    if (searchQuery) {
+        searchInput.value = searchQuery;
     }
-    
-    // Изменение: Всегда загружаем все элементы, а не только выбранные
-    // Загружаем обычный список элементов
+
+    const savedOrder = loadOrderFromLocalStorage();
     await loadItems(0, false);
-    
-    // Применяем сохраненный порядок
+
     if (savedOrder && savedOrder.length > 0) {
-        applyItemsOrder(savedOrder);
+        const items = Array.from(container.querySelectorAll('.item'));
+        const itemsMap = new Map(items.map(item => [
+            parseInt(item.getAttribute('data-id')),
+            item
+        ]));
+
+        container.innerHTML = '';
+        savedOrder.forEach(id => {
+            const item = itemsMap.get(id);
+            if (item) container.appendChild(item);
+        });
     }
-    
+
     initialLoadComplete = true;
-    
-    /* Закомментированный старый код:
-    // Проверяем, есть ли выбранные элементы
-    const hasSelected = await loadSelectedItems();
-    
-    if (!hasSelected) {
-        // Если нет выбранных элементов, загружаем обычный список
-        await loadItems(0, false);
-        
-        // Применяем сохраненный порядок
-        if (savedOrder && savedOrder.length > 0) {
-            applyItemsOrder(savedOrder);
-        }
-    }
-    */
 }
 
-// Обработчик прокрутки для подгрузки элементов
+// Обработчики событий
 window.addEventListener('scroll', () => {
     if (!initialLoadComplete) return;
-    
+
     const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
-    
+
     if (scrollTop + clientHeight >= scrollHeight - 100 && !isLoading && hasMoreItems) {
         currentPage++;
         loadItems(currentPage, true);
     }
 });
 
-// Обработчик для поиска
 searchInput.addEventListener('input', (e) => {
     clearTimeout(searchTimeout);
-    
     searchTimeout = setTimeout(() => {
         searchQuery = e.target.value.trim();
+        localStorage.setItem('searchQuery', searchQuery);
         currentPage = 0;
         loadItems(currentPage, false);
     }, 300);
 });
 
-// Обработчик для кнопки сброса
 resetButton.addEventListener('click', resetOrder);
 
-// Инициализация приложения
+// Запуск приложения
 initApp();
